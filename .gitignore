@@ -1,0 +1,57 @@
+# Large 3D assets / scenes (kept locally, not in Git)
+*.blend
+*.blend1
+*.hdr
+*.exr
+vla/rat_lab/**/textures/
+# ============ Datasets & outputs ============
+Dataset/
+datasets/
+outputs/
+checkpoints/
+*.parquet
+*.jsonl
+*.mp4
+*.avi
+
+# ============ LeRobot / dataset conversion artifacts ============
+data/chunk-*/
+videos/chunk-*/
+meta/
+
+# ============ Isaac Lab / Isaac Sim ============
+logs/
+*.usd
+*.usda
+*.usdc
+*.usdz
+*.kit
+_isaac_sim/
+omni.log
+
+# ============ Model / training artifacts ============
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+wandb/
+runs/
+
+# ============ Hugging Face cache ============
+.cache/
+huggingface_cache/
+
+# ============ Jupyter ============
+.ipynb_checkpoints/
+
+# ============ Editor / OS ============
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ============ Env / secrets ============
+.env
+*.env
+HF_TOKEN*
