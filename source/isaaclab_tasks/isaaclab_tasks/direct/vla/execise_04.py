@@ -32,43 +32,7 @@ from isaaclab.utils.math import quat_apply, subtract_frame_transforms
 
 from isaaclab_assets import UPB_SQUEEZABLE_DRONE_CFG  # isort: skip
 from isaaclab.markers import CUBOID_MARKER_CFG  # isort: skip
-# =============================================================================
-# Runtime options
-# =============================================================================
-is_RL_training = True
-DATA_COLLECTOR = False
-if is_RL_training and not DATA_COLLECTOR:
-    ENABLE_CAMERA = False
-    IS_ADDING_OBJECTS = False
-elif not is_RL_training and DATA_COLLECTOR:
-    ENABLE_CAMERA = True
-    IS_ADDING_OBJECTS = True
-else:
-    ENABLE_CAMERA = True
-    IS_ADDING_OBJECTS = False
-
-ROOT_DATASET_PATH = "/home/summer_school/summer_ws/Dataset/exp2vla-dataset-v0"
-MAX_DATASET_EPISODES = 1000
-
-
-
-SHAPES = ("cuboid", "cylinder", "cone")
-COLORS = ("red", "blue", "green")
-
-# Position sampling ranges (relative to env origin)
-OBJECT_X_RANGE = (1.5, 2.5)
-OBJECT_Y_RANGE = (-1.5, 1.5)
-OBJECT_Z = 1.375
-
-GOAL_OFFSET = 1.0
-
-# All possible task instructions: every (color, shape) pair
-TASKS = [
-    {"instruction": f"Fly to the {color} {shape}", "color": color, "shape": shape}
-    for color in COLORS
-    for shape in SHAPES
-]
-
+import random
 # Propeller joint names (order matters for velocity targets)
 PROPELLER_JOINT_NAMES = (
     "PropellerJoint1",
@@ -87,120 +51,22 @@ MAX_INCLINATION_DEG = 30.0
 MIN_HEIGHT = 0.25
 MAX_HEIGHT = 2.0
 
-# =============================================================================
-# UI
-# =============================================================================
-class QuadcopterEnvWindow(BaseEnvWindow):
-    """Window manager for the Quadcopter environment."""
 
-    def __init__(self, env: "QuadcopterEnv", window_name: str = "IsaacLab"):
-        super().__init__(env, window_name)
-        with self.ui_window_elements["main_vstack"]:
-            with self.ui_window_elements["debug_frame"]:
-                with self.ui_window_elements["debug_vstack"]:
-                    self._create_debug_vis_ui_element("targets", self.env)
+# Define shapes and colors
 
+SHAPES = ("cuboid", "cylinder", "cone")
+COLORS = ("red", "blue", "green")
 
-# =============================================================================
-# Environment configuration
-# =============================================================================
-@configclass
-class QuadcopterEnvCfg(DirectRLEnvCfg):
-    # --- env ---
-    episode_length_s = 10.0
-    decimation = 2
-    action_space = 3
-    observation_space = 3
-    state_space = 0
-    debug_vis = True
-    ui_window_class_type = QuadcopterEnvWindow
+# All possible task instructions: every (color, shape) pair
+TASKS = [
+    {"instruction": f"Fly to the {color} {shape}", "color": color, "shape": shape}
+    for color in COLORS
+    for shape in SHAPES
+]
 
-    # --- simulation ---
-    sim: SimulationCfg = SimulationCfg(
-        dt=1.0 / 50.0,
-        render_interval=decimation,
-        physics_material=sim_utils.RigidBodyMaterialCfg(
-            friction_combine_mode="multiply",
-            restitution_combine_mode="multiply",
-            static_friction=1.0,
-            dynamic_friction=1.0,
-            restitution=0.0,
-        ),
-    )
-
-    terrain = TerrainImporterCfg(
-        prim_path="/World/ground",
-        terrain_type="plane",
-        collision_group=-1,
-        physics_material=sim_utils.RigidBodyMaterialCfg(
-            friction_combine_mode="multiply",
-            restitution_combine_mode="multiply",
-            static_friction=1.0,
-            dynamic_friction=1.0,
-            restitution=0.0,
-        ),
-        debug_vis=False,
-    )
-
-    background: AssetBaseCfg = AssetBaseCfg(
-        prim_path="/World/background",
-        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, 0.0, 0.0)),
-        spawn=sim_utils.UsdFileCfg(
-            usd_path=(
-                "/home/summer_school/summer_ws/IsaacLab/source/isaaclab_tasks/"
-                "isaaclab_tasks/direct/quadcopter/rat_lab/multicorridor/empty_lab.usd"
-            ),
-            scale=(1.0, 1.0, 1.0),
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                kinematic_enabled=False,
-                disable_gravity=True,
-            ),
-        ),
-    )
-
-    # --- scene ---
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(
-        num_envs=1,
-        env_spacing=25,
-        replicate_physics=True,
-        clone_in_fabric=False,
-    )
-
-    # --- robot ---
-    robot: ArticulationCfg = UPB_SQUEEZABLE_DRONE_CFG.replace(
-        prim_path="/World/envs/env_.*/Robot"
-    )
-
-    # --- camera (Intel RealSense D455 RGB) ---
-    rgbd_camera: CameraCfg = CameraCfg(
-        prim_path="/World/envs/env_.*/Robot/base_link/front_camera",
-        offset=CameraCfg.OffsetCfg(
-            pos=(0.2, 0.0, 0.015),
-            rot=(0.5, -0.5, 0.5, -0.5),  # ROS convention
-            convention="ros",
-        ),
-        data_types=["rgb"],  # add "distance_to_image_plane" if you need depth
-        spawn=sim_utils.PinholeCameraCfg(
-            # Matches Isaac Sim RealSense D455 RGB asset
-            focal_length=1.93,           # cm  (real lens ~1.93 mm; Isaac uses cm)
-            focus_distance=0.6,          # m   (typical focus plane)
-            horizontal_aperture=3.896,   # cm  → ~86–90° HFOV
-            clipping_range=(0.4, 10.0),   # m   (D455 recommended range)
-            # optional: f_stop=2.0,      # real D455 is ~f/2.0
-        ),
-        update_period=1.0 / 30.0,        # 30 Hz (typical full-res RGB)
-        width=640,                      # native RGB max is 1280×800
-        height=480,                      # or 720 / 480 if you prefer lower res
-    )
-
-    # --- viewer ---
-    viewer: ViewerCfg = ViewerCfg(
-        eye=(-6.5, 0.0, 3.5),
-        lookat=(2.0, 0.0, 1.36),
-        origin_type="env",
-    )
-
-
+ROOT_DATASET_PATH = "/home/summer_school/summer_ws/Dataset/exp2vla-dataset-test"
+MAX_DATASET_EPISODES = 3
+ENABLE_CAMERA = True
 # =============================================================================
 # Dataset recorder
 # =============================================================================
@@ -354,6 +220,119 @@ class IsaacDatasetRecorder:
 
 
 # =============================================================================
+# UI
+# =============================================================================
+class QuadcopterEnvWindow(BaseEnvWindow):
+    """Window manager for the Quadcopter environment."""
+
+    def __init__(self, env: "QuadcopterEnv", window_name: str = "IsaacLab"):
+        super().__init__(env, window_name)
+        with self.ui_window_elements["main_vstack"]:
+            with self.ui_window_elements["debug_frame"]:
+                with self.ui_window_elements["debug_vstack"]:
+                    self._create_debug_vis_ui_element("targets", self.env)
+
+
+# =============================================================================
+# Environment configuration
+# =============================================================================
+@configclass
+class QuadcopterEnvCfg(DirectRLEnvCfg):
+    # --- env ---
+    episode_length_s = 10.0
+    decimation = 2
+    action_space = 3
+    observation_space = 3
+    state_space = 0
+    debug_vis = True
+    ui_window_class_type = QuadcopterEnvWindow
+
+    # --- simulation ---
+    sim: SimulationCfg = SimulationCfg(
+        dt=1.0 / 50.0,
+        render_interval=decimation,
+        physics_material=sim_utils.RigidBodyMaterialCfg(
+            friction_combine_mode="multiply",
+            restitution_combine_mode="multiply",
+            static_friction=1.0,
+            dynamic_friction=1.0,
+            restitution=0.0,
+        ),
+    )
+
+    terrain = TerrainImporterCfg(
+        prim_path="/World/ground",
+        terrain_type="plane",
+        collision_group=-1,
+        physics_material=sim_utils.RigidBodyMaterialCfg(
+            friction_combine_mode="multiply",
+            restitution_combine_mode="multiply",
+            static_friction=1.0,
+            dynamic_friction=1.0,
+            restitution=0.0,
+        ),
+        debug_vis=False,
+    )
+
+    background: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/background",
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, 0.0, 0.0)),
+        spawn=sim_utils.UsdFileCfg(
+            usd_path=(
+                "/home/summer_school/summer_ws/IsaacLab/source/isaaclab_tasks/"
+                "isaaclab_tasks/direct/quadcopter/rat_lab/multicorridor/empty_lab.usd"
+            ),
+            scale=(1.0, 1.0, 1.0),
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                kinematic_enabled=False,
+                disable_gravity=True,
+            ),
+        ),
+    )
+
+    # --- scene ---
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(
+        num_envs=1,
+        env_spacing=25,
+        replicate_physics=True,
+        clone_in_fabric=False,
+    )
+
+    # --- robot ---
+    robot: ArticulationCfg = UPB_SQUEEZABLE_DRONE_CFG.replace(
+        prim_path="/World/envs/env_.*/Robot"
+    )
+
+    # --- camera (Intel RealSense D455 RGB) ---
+    rgbd_camera: CameraCfg = CameraCfg(
+        prim_path="/World/envs/env_.*/Robot/base_link/front_camera",
+        offset=CameraCfg.OffsetCfg(
+            pos=(0.2, 0.0, 0.015),
+            rot=(0.5, -0.5, 0.5, -0.5),  # ROS convention
+            convention="ros",
+        ),
+        data_types=["rgb"],  # add "distance_to_image_plane" if you need depth
+        spawn=sim_utils.PinholeCameraCfg(
+            # Matches Isaac Sim RealSense D455 RGB asset
+            focal_length=1.93,           # cm  (real lens ~1.93 mm; Isaac uses cm)
+            focus_distance=0.6,          # m   (typical focus plane)
+            horizontal_aperture=3.896,   # cm  → ~86–90° HFOV
+            clipping_range=(0.4, 10.0),   # m   (D455 recommended range)
+            # optional: f_stop=2.0,      # real D455 is ~f/2.0
+        ),
+        update_period=1.0 / 30.0,        # 30 Hz (typical full-res RGB)
+        width=640,                      # native RGB max is 1280×800
+        height=480,                      # or 720 / 480 if you prefer lower res
+    )
+
+    # --- viewer ---
+    viewer: ViewerCfg = ViewerCfg(
+        eye=(-6.5, 0.0, 3.5),
+        lookat=(2.0, 0.0, 1.36),
+        origin_type="env",
+    )
+
+# =============================================================================
 # Environment
 # =============================================================================
 class QuadcopterEnv(DirectRLEnv):
@@ -406,23 +385,21 @@ class QuadcopterEnv(DirectRLEnv):
         
         # Debug visualization
         self.set_debug_vis(self.cfg.debug_vis)
+
+        # Adding objects with different shapes and colors
+        self._object_pos_w = {
+            shape: torch.zeros(self.num_envs, 3, device=self.device)
+            for shape in SHAPES
+        }
+        # Color currently assigned to each shape  (string, updated every reset)
+        self._object_color = {shape: "red" for shape in SHAPES}
+
         self._task_names = [""] * self.num_envs
         self._task_ids = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
+        self._setup_dataset_recording()
 
-        if IS_ADDING_OBJECTS:
-            # One slot per shape
-            self._object_pos_w = {
-                shape: torch.zeros(self.num_envs, 3, device=self.device)
-                for shape in SHAPES
-            }
-            # Color currently assigned to each shape  (string, updated every reset)
-            self._object_color = {shape: "red" for shape in SHAPES}
 
-            self._desired_pos_w = torch.zeros(self.num_envs, 3, device=self.device)
-            self._task_name = TASKS[0]["instruction"]
-
-        if DATA_COLLECTOR:
-            self._setup_dataset_recording()
+        
 
     # -------------------------------------------------------------------------
     # Scene setup
@@ -439,10 +416,8 @@ class QuadcopterEnv(DirectRLEnv):
         self.cfg.terrain.num_envs = self.scene.cfg.num_envs
         self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
         self._terrain = self.cfg.terrain.class_type(self.cfg.terrain)
-
-        if ENABLE_CAMERA:
-            self._rgbd_camera = Camera(self.cfg.rgbd_camera)
-            self.scene.sensors["rgbd_camera"] = self._rgbd_camera
+        self._rgbd_camera = Camera(self.cfg.rgbd_camera)
+        self.scene.sensors["rgbd_camera"] = self._rgbd_camera
 
         self.scene.clone_environments(copy_from_source=False)
 
@@ -497,9 +472,8 @@ class QuadcopterEnv(DirectRLEnv):
         self._robot.set_joint_velocity_target(self._rotor_target_vel)
 
     def _get_observations(self) -> dict:
-        if (
-            DATA_COLLECTOR
-            and hasattr(self, "_recording_enabled")
+
+        if (hasattr(self, "_recording_enabled")
             and self._recording_enabled
         ):
             self._data_recorder(self._raw_actions)
@@ -582,35 +556,19 @@ class QuadcopterEnv(DirectRLEnv):
 
         n = len(env_ids)
 
-        # ----- randomize robot start pose -----
-        joint_pos = self._robot.data.default_joint_pos[env_ids]
-        joint_vel = self._robot.data.default_joint_vel[env_ids]
-        default_root_state = self._robot.data.default_root_state[env_ids].clone()
-        default_root_state[:, 0] = torch.empty(n, device=self.device).uniform_(-3.5, -3.0)
-        default_root_state[:, 1] = torch.empty(n, device=self.device).uniform_(-0.5, 0.5)
-        default_root_state[:, 2] = torch.empty(n, device=self.device).uniform_(0.75, 1.5)
-        default_root_state[:, :3] += self._terrain.env_origins[env_ids]
-
-        
-        # ----- sample task first -----
-        # if DATA_COLLECTOR:
         task_idx = int(torch.randint(0, len(TASKS), (1,), device=self.device).item())
         task = TASKS[task_idx]
-        self._task_name = task["instruction"]
+        # self._task_name = task["instruction"]
         target_color = task["color"]
         target_shape = task["shape"]
-        # else:
-        #     task_idx = int(torch.randint(0, len(TASKS), (1,), device=self.device).item())
-        #     task = TASKS[task_idx]
-        #     target_color = task["color"]
-        #     target_shape = task["shape"]
 
         for env_id in env_ids.tolist():
             self._task_names[env_id] = task["instruction"]
 
         self._task_ids[env_ids] = task_idx
 
-        # ----- assign colors: force task (color, shape), shuffle the rest -----
+
+        # ----- assign colors and shapes shuffle the rest to form a new goal -----
         self._object_color[target_shape] = target_color
         remaining_colors = [c for c in COLORS if c != target_color]
         remaining_shapes = [s for s in SHAPES if s != target_shape]
@@ -620,34 +578,44 @@ class QuadcopterEnv(DirectRLEnv):
 
         # # ----- sample object positions -----
         # # This approach can produce occlusion
-        # xs = torch.empty(n, 3, device=self.device).uniform_(*OBJECT_X_RANGE)
-        # ys = torch.empty(n, 3, device=self.device).uniform_(*OBJECT_Y_RANGE)
-        # for i, shape in enumerate(SHAPES):
-        #     self._object_pos_w[shape][env_ids, 0] = xs[:, i]
-        #     self._object_pos_w[shape][env_ids, 1] = ys[:, i]
-        #     self._object_pos_w[shape][env_ids, 2] = OBJECT_Z
-        #     self._object_pos_w[shape][env_ids, :2] += self._terrain.env_origins[env_ids, :2]
-
-        # Solution is to set min separation if possible
-        # ----- sample object positions (with separation) -----
-        xs, ys = self._sample_object_xy(n, min_dist=0.8)
-
+        xs = torch.empty(n, 3, device=self.device).uniform_(2.5, 3.0)
+        ys = torch.empty(n, 3, device=self.device).uniform_(-1.5, 1.5)
         for i, shape in enumerate(SHAPES):
             self._object_pos_w[shape][env_ids, 0] = xs[:, i]
             self._object_pos_w[shape][env_ids, 1] = ys[:, i]
-            self._object_pos_w[shape][env_ids, 2] = OBJECT_Z
+            self._object_pos_w[shape][env_ids, 2] = 1.5
             self._object_pos_w[shape][env_ids, :2] += self._terrain.env_origins[env_ids, :2]
 
         # ----- goal = target object, with x offset -----
         self._desired_pos_w[env_ids] = self._object_pos_w[target_shape][env_ids].clone()
-        self._desired_pos_w[env_ids, 0] -= GOAL_OFFSET
+        self._desired_pos_w[env_ids, 0] -= 1.0
 
-        # TODO
-        # print(f"Task: {self._task_name}")
-        # print("Layout:", {s: self._object_color[s] for s in SHAPES})
+        # ----- print task information -----
+        for env_id in env_ids.tolist():
+            desired_pos = self._desired_pos_w[env_id].cpu().numpy()
+
+            print("\n========== Task Info ==========")
+            print(f"Instruction: {task['instruction']}")
+            print(f"Desired position: x={desired_pos[0]:.3f}, "
+                f"y={desired_pos[1]:.3f}, "
+                f"z={desired_pos[2]:.3f}")
+
+            print(f"Object at desired position:")
+            print(f"  Shape: {target_shape}")
+            print(f"  Color: {target_color}")
+            print("===============================")
+
+        # ----- randomize robot start pose -----
+        joint_pos = self._robot.data.default_joint_pos[env_ids]
+        joint_vel = self._robot.data.default_joint_vel[env_ids]
+        default_root_state = self._robot.data.default_root_state[env_ids].clone()
+        default_root_state[:, 0] = torch.empty(n, device=self.device).uniform_(-3.5, -3.0)
+        default_root_state[:, 1] = torch.empty(n, device=self.device).uniform_(-0.5, 0.5)
+        default_root_state[:, 2] = torch.empty(n, device=self.device).uniform_(0.75, 1.5)
+        default_root_state[:, :3] += self._terrain.env_origins[env_ids]
 
         # ----- dataset: finalize old episode, start new one with *this* task -----
-        if DATA_COLLECTOR and hasattr(self, "_recording_enabled"):
+        if hasattr(self, "_recording_enabled"):
             self._handle_dataset_episode_reset(env_ids)
 
         # ----- write robot state -----
@@ -655,66 +623,6 @@ class QuadcopterEnv(DirectRLEnv):
         self._robot.write_root_velocity_to_sim(default_root_state[:, 7:], env_ids)
         self._robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
 
-    # -------------------------------------------------------------------------
-    # Add objects for data collection
-    # -------------------------------------------------------------------------
-
-    def _set_debug_vis_impl(self, debug_vis: bool):
-        if not debug_vis:
-            for v in getattr(self, "shape_color_visualizers", {}).values():
-                v.set_visibility(False)
-            return
-
-        if not hasattr(self, "shape_color_visualizers"):
-            self.shape_color_visualizers = {}
-
-            color_rgb = {
-                "red": (1.0, 0.0, 0.0),
-                "blue": (0.0, 0.0, 1.0),
-                "green": (0.0, 1.0, 0.0),
-            }
-            geom_builders = {
-                "cuboid": lambda mat: sim_utils.CuboidCfg(
-                    size=(0.15, 0.15, 0.15), visual_material=mat
-                ),
-                "cylinder": lambda mat: sim_utils.CylinderCfg(
-                    radius=0.06, height=0.20, visual_material=mat
-                ),
-                "cone": lambda mat: sim_utils.ConeCfg(
-                    radius=0.10, height=0.20, visual_material=mat
-                ),
-            }
-
-            for shape in SHAPES:
-                for color in COLORS:
-                    mat = sim_utils.PreviewSurfaceCfg(diffuse_color=color_rgb[color])
-                    geom = geom_builders[shape](mat)
-                    name = f"{color}_{shape}"
-                    cfg = VisualizationMarkersCfg(
-                        prim_path=f"/Visuals/Targets/{name}",
-                        markers={name: geom},
-                    )
-                    self.shape_color_visualizers[(shape, color)] = VisualizationMarkers(cfg)
-
-        # visibility is controlled every frame in the callback
-        for v in self.shape_color_visualizers.values():
-            v.set_visibility(False)
-
-
-    def _debug_vis_callback(self, event):
-        if not hasattr(self, "shape_color_visualizers"):
-            return
-
-        for shape in SHAPES:
-            current_color = self._object_color[shape]  # set at reset
-            for color in COLORS:
-                key = (shape, color)
-                vis = self.shape_color_visualizers[key]
-                if color == current_color:
-                    vis.set_visibility(True)
-                    vis.visualize(translations=self._object_pos_w[shape])
-                else:
-                    vis.set_visibility(False)
 
     # -------------------------------------------------------------------------
     # Dataset recording
@@ -829,14 +737,6 @@ class QuadcopterEnv(DirectRLEnv):
 
 
     def _get_dataset_observation(self, env_id: int) -> list:
-        # Bug happens here. We can simplify this to have only relative pos from the agent to goal in body coordinate
-
-        # lin = self._robot.data.root_lin_vel_b[env_id].detach().cpu().numpy()
-        # ang = self._robot.data.root_ang_vel_b[env_id].detach().cpu().numpy()
-        # return [
-        #     float(lin[0]), float(lin[1]), float(lin[2]),
-        #     float(ang[0]), float(ang[1]), float(ang[2]),
-        # ]
 
         relative_pos_body_frame, _ = subtract_frame_transforms(
             self._robot.data.root_pos_w,
@@ -877,45 +777,66 @@ class QuadcopterEnv(DirectRLEnv):
                 self._robot.data.root_quat_w[env_id]
             ),
         }
+    
 
-    # This helper function is to make sure no occluded scenarios happening
-    def _sample_object_xy(
-        self,
-        n: int,
-        min_dist: float = 0.8,
-        max_tries: int = 100,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Sample (n, 3) x and y positions inside OBJECT_X_RANGE / OBJECT_Y_RANGE
-        with pairwise distance >= min_dist (in the env-local frame).
-        """
-        xs = torch.zeros(n, 3, device=self.device)
-        ys = torch.zeros(n, 3, device=self.device)
 
-        for env_i in range(n):
-            ok = False
-            for _ in range(max_tries):
-                cand_x = torch.empty(3, device=self.device).uniform_(*OBJECT_X_RANGE)
-                cand_y = torch.empty(3, device=self.device).uniform_(*OBJECT_Y_RANGE)
-                # pairwise distances
-                dx = cand_x.unsqueeze(0) - cand_x.unsqueeze(1)  # (3,3)
-                dy = cand_y.unsqueeze(0) - cand_y.unsqueeze(1)
-                dist = torch.sqrt(dx * dx + dy * dy)
-                # ignore diagonal
-                dist.fill_diagonal_(1e6)
-                if dist.min() >= min_dist:
-                    xs[env_i] = cand_x
-                    ys[env_i] = cand_y
-                    ok = True
-                    break
-            if not ok:
-                # fallback: spread along y
-                xs[env_i] = sum(OBJECT_X_RANGE) / 2.0
-                ys[env_i] = torch.tensor(
-                    [-min_dist, 0.0, min_dist], device=self.device
-                ).clamp(OBJECT_Y_RANGE[0], OBJECT_Y_RANGE[1])
+    # Update visualization callback
+    def _set_debug_vis_impl(self, debug_vis: bool):
+        if not debug_vis:
+            for v in getattr(self, "shape_color_visualizers", {}).values():
+                v.set_visibility(False)
+            return
 
-        return xs, ys
+        if not hasattr(self, "shape_color_visualizers"):
+            self.shape_color_visualizers = {}
+
+            color_rgb = {
+                "red": (1.0, 0.0, 0.0),
+                "blue": (0.0, 0.0, 1.0),
+                "green": (0.0, 1.0, 0.0),
+            }
+            geom_builders = {
+                "cuboid": lambda mat: sim_utils.CuboidCfg(
+                    size=(0.15, 0.15, 0.15), visual_material=mat
+                ),
+                "cylinder": lambda mat: sim_utils.CylinderCfg(
+                    radius=0.06, height=0.20, visual_material=mat
+                ),
+                "cone": lambda mat: sim_utils.ConeCfg(
+                    radius=0.10, height=0.20, visual_material=mat
+                ),
+            }
+
+            for shape in SHAPES:
+                for color in COLORS:
+                    mat = sim_utils.PreviewSurfaceCfg(diffuse_color=color_rgb[color])
+                    geom = geom_builders[shape](mat)
+                    name = f"{color}_{shape}"
+                    cfg = VisualizationMarkersCfg(
+                        prim_path=f"/Visuals/Targets/{name}",
+                        markers={name: geom},
+                    )
+                    self.shape_color_visualizers[(shape, color)] = VisualizationMarkers(cfg)
+
+        # visibility is controlled every frame in the callback
+        for v in self.shape_color_visualizers.values():
+            v.set_visibility(False)
+
+
+    def _debug_vis_callback(self, event):
+        if not hasattr(self, "shape_color_visualizers"):
+            return
+
+        for shape in SHAPES:
+            current_color = self._object_color[shape]  # set at reset
+            for color in COLORS:
+                key = (shape, color)
+                vis = self.shape_color_visualizers[key]
+                if color == current_color:
+                    vis.set_visibility(True)
+                    vis.visualize(translations=self._object_pos_w[shape])
+                else:
+                    vis.set_visibility(False)
 
     @staticmethod
     def _tensor_to_float_list(tensor: torch.Tensor) -> list:
@@ -931,3 +852,6 @@ class QuadcopterEnv(DirectRLEnv):
         if env_ids is None:
             return self._task_names
         return [self._task_names[i] for i in env_ids]
+
+
+   

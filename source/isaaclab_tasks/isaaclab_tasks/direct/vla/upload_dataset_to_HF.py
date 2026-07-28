@@ -4,9 +4,9 @@ from huggingface_hub import HfApi, hf_hub_download
 import pyarrow.parquet as pq
 
 
-VERSION = "0.1"
+VERSION = "0.2"
 HF_TOKEN = os.getenv("HF_TOKEN")
-DATASET_REPO = "UPB-RAT/vla-drone-v0.1"
+DATASET_REPO = "UPB-RAT/vla-drone-v0.2"
 
 converted_dataset_path = Path(
     os.path.expanduser(f"/home/summer_school/summer_ws/Dataset/vla-drone-v{VERSION}")
