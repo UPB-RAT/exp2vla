@@ -25,7 +25,7 @@ Vision-language-action (VLA) models open a new path toward intuitive robot contr
 
 ---
 
-## Features
+# Features
 
 - Language-conditioned drone navigation in Isaac Lab / Isaac Sim.
 - Multi-object scenes: cuboid, cylinder, and cone with randomized colors and positions.
@@ -42,12 +42,16 @@ Vision-language-action (VLA) models open a new path toward intuitive robot contr
 exp2vla/
 ├── README.md
 ├── docs/
-│   └── source/_static/          # figures
+│   └──  # figures
+├── scripts/reinforcement_learning/rl_games/
+│   └──  play.py
+    └──  train.py
+    └──  play_vla.py
 ├── source/isaaclab_tasks/.../   # Isaac Lab env, recorder, conversion
+          └──  isaaclab_assets/robots/sq_drone.py
+          └──  isaaclab_tasks/isaaclab_tasks/direct/vla/....
 └── ...
 ```
-
-Exact paths may vary depending on how this repo is packaged with Isaac Lab.
 
 ---
 
@@ -57,94 +61,119 @@ Exact paths may vary depending on how this repo is packaged with Isaac Lab.
 
 - Linux (x86_64).
 - Python 3.11.
-- Isaac Sim 5.0.0 / Isaac Lab (for simulation and data collection).
+- Isaac Sim 5.0.0 / Isaac Lab: Follow the [Isaac Lab installation guide](https://isaac-sim.github.io/IsaacLab/)
 - CUDA-capable GPU recommended.
-
-### Clone and setup
-
-```bash
-git clone https://github.com/UPB-RAT/exp2vla.git
-cd exp2vla
-```
-
-Follow the [Isaac Lab installation guide](https://isaac-sim.github.io/IsaacLab/) for the simulator environment, then install extra Python deps:
-
-```bash
-pip install lerobot huggingface_hub pillow numpy
-```
-
-For dataset visualization, install LeRobot’s dataset tools as described in the [LeRobot repository](https://github.com/huggingface/lerobot).
+- Lerobot: Install LeRobot’s dataset tools as described in the [LeRobot repository](https://github.com/huggingface/lerobot).
 
 ---
-
 ## Instructions
 
-### 1. Download the dataset
+### 1. Train an Expert Policy (Without Vision)
 
-**Hugging Face CLI:**
+We use **RL Games** to train PPO agents, which serve as the expert policies for later stages.
+
+The task `execise_00.py` is configured to train a PPO policy **without visual observations**.
+
+Launch training with:
 
 ```bash
-huggingface-cli download UPB-RAT/vla-drone-v0.1 \
-  --repo-type dataset \
-  --local-dir ./vla-drone-v0.1
+./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
+    --task execise_00 \
+    --num_envs 1024 \
+    --headless
 ```
 
-**Python (Hugging Face Hub):**
+After training completes, the checkpoints will be saved under:
+
+```text
+logs/rl_games/...
+```
+
+Before moving to the next step, verify that the trained policy works correctly by running:
+
+```bash
+./isaaclab.sh -p scripts/reinforcement_learning/rl_games/play.py \
+    --task execise_00 \
+    --num_envs 1 \
+    --checkpoint <path_to_checkpoint>
+```
+
+
+### 2. Add a Front-Facing Camera
+
+After completing Step 1, add a front-facing RGB camera to the robot. This camera is required for collecting RGB observations for Vision-Language-Action (VLA) training.
+
+Configure the camera as shown in `execise_01.py`:
 
 ```python
-from huggingface_hub import snapshot_download
-
-snapshot_download(
-    repo_id="UPB-RAT/vla-drone-v0.1",
-    repo_type="dataset",
-    local_dir="./vla-drone-v0.1",
+# --- Front RGB camera (Intel RealSense D455 RGB) ---
+rgbd_camera: CameraCfg = CameraCfg(
+    prim_path="/World/envs/env_.*/Robot/base_link/front_camera",
+    offset=CameraCfg.OffsetCfg(
+        pos=(0.2, 0.0, 0.015),
+        rot=(0.5, -0.5, 0.5, -0.5),  # ROS convention
+        convention="ros",
+    ),
+    data_types=["rgb"],  # Add "distance_to_image_plane" if depth images are needed.
+    spawn=sim_utils.PinholeCameraCfg(
+        # Parameters matching the Isaac Sim Intel RealSense D455 RGB camera
+        focal_length=1.93,           # cm (real lens ≈ 1.93 mm; Isaac uses cm)
+        focus_distance=0.6,          # m
+        horizontal_aperture=3.896,   # cm (~86–90° horizontal FOV)
+        clipping_range=(0.4, 10.0),  # m
+        # Optional: f_stop=2.0
+    ),
+    update_period=1.0 / 30.0,        # 30 Hz
+    width=640,
+    height=480,
 )
 ```
 
-**LeRobot API:**
+| Parameter | Value |
+|-----------|-------|
+| Sensor | Intel RealSense D455 RGB |
+| Resolution | 640 × 480 |
+| Frame rate | 30 Hz |
+| Data type | `rgb` |
+| Optional | Add `"distance_to_image_plane"` to `data_types` if depth images are required. |
+
+After adding the camera, launch the environment and verify that RGB images are being published correctly before proceeding to data collection and VLA training.
+
+### 3. Add Task Objects and Language Instructions
+
+Next, we add the task objects and define the corresponding language instructions. This is implemented in `execise_02.py` (object spawning) and `execise_03.py` (task instruction generation).
+
+In this example, we use **three object shapes** and **three colors**. Every color is paired with every shape, resulting in a total of **nine possible task instructions**.
 
 ```python
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+# Define available shapes and colors
+SHAPES = ("cuboid", "cylinder", "cone")
+COLORS = ("red", "blue", "green")
 
-dataset = LeRobotDataset("UPB-RAT/vla-drone-v0.1")
-print(dataset)
-print(f"Episodes: {dataset.num_episodes}, frames: {len(dataset)}")
-sample = dataset
-print(sample.keys())
+# Generate all possible task instructions
+TASKS = [
+    {
+        "instruction": f"Fly to the {color} {shape}",
+        "color": color,
+        "shape": shape,
+    }
+    for color in COLORS
+    for shape in SHAPES
+]
 ```
 
----
+At every environment reset:
 
-### 2. Visualize episodes
+- The objects are assigned random color-shape combinations.
+- Their positions are randomized within the workspace.
+- One of the valid `(color, shape)` pairs is randomly selected as the task.
+- The corresponding language instruction (e.g., **"Fly to the red cone"**) is provided to the agent.
 
-**Browser (LeRobot Space):**
+Randomizing both the scene and the language instruction at every reset encourages the policy to generalize across different object configurations instead of memorizing a fixed environment.
 
-Open:
+### 4. Add data collection function
 
-```text
-https://huggingface.co/spaces/lerobot/visualize_dataset?path=%2FUPB-RAT%2Fvla-drone-v0.1%2Fepisode_0%3Ft%3D0
-```
-
-**Local CLI:**
-
-```bash
-lerobot-dataset-viz \
-  --repo-id UPB-RAT/vla-drone-v0.1 \
-  --episode-index 0
-```
-
-With a local copy:
-
-```bash
-lerobot-dataset-viz \
-  --repo-id UPB-RAT/vla-drone-v0.1 \
-  --root ./vla-drone-v0.1 \
-  --episode-index 0
-```
-
----
-
-### 3. Dataset format (LeRobot v3.0)
+#### 4.1. Dataset format (LeRobot v3.0)
 
 **Fields:**
 
@@ -170,18 +199,18 @@ vla-drone-v0.1/
 
 ---
 
-### 4. Collect expert demonstrations (Isaac Lab)
+#### 4.2. Collect expert demonstrations (Isaac Lab)
 
-Enable recording in the env config (example):
-
-```python
-ENABLE_CAMERA = True
-DATA_COLLECTOR = True
-ROOT_DATASET_PATH = "~/summer_ws/Dataset/exp2vla-dataset-v0"
-MAX_DATASET_EPISODES = 10
+Run your `play.py` / teleop / expert policy script
+```bash
+  ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/play.py \
+    --task execise_04 \
+    --num_envs 1 \
+    --enable_cameras \
+    --checkpoint <path_to_checkpoint> 
 ```
 
-Run your `play.py` / teleop / expert policy script so the env writes:
+so the env writes:
 
 - `data/chunk-000/episode_XXXXXX.jsonl`
 - `videos/.../episode_XXXXXX_frames/frame_XXXXX.jpg`
@@ -191,7 +220,7 @@ Each run can use a timestamped folder (e.g. `exp2vla-dataset-v0_YYYYMMDD_HHMMSS`
 
 ---
 
-### 5. Convert Isaac recordings → LeRobot
+## 5. Convert Isaac recordings → LeRobot
 
 Use:
 
@@ -208,79 +237,14 @@ In `process_dataset.py`, ensure:
 
 After conversion, validate parquet locally.
 
-**Check footer magic:**
 
-```bash
-tail -c 4 /path/to/vla-drone-v0.1/data/chunk-000/file-000.parquet | xxd
-# expect: 50 41 52 31  ("PAR1")
-```
+## 6. Upload to Hugging Face
 
-**Inspect via PyArrow:**
+## 7. Fine-tune VLAs
 
-```python
-import pyarrow.parquet as pq
-
-t = pq.read_table("/path/to/vla-drone-v0.1/data/chunk-000/file-000.parquet")
-print(t.num_rows, t.column_names)
-```
 
 ---
-
-### 6. Upload to Hugging Face
-
-Set your token:
-
-```bash
-export HF_TOKEN=hf_xxxxxxxx   # write access to UPB-RAT
-```
-
-**Python API:**
-
-```python
-from huggingface_hub import HfApi
-import os
-
-api = HfApi(token=os.environ["HF_TOKEN"])
-api.create_repo(
-    repo_id="UPB-RAT/vla-drone-v0.1",
-    repo_type="dataset",
-    private=False,
-    exist_ok=True,
-)
-api.upload_folder(
-    folder_path="/path/to/vla-drone-v0.1",
-    repo_id="UPB-RAT/vla-drone-v0.1",
-    repo_type="dataset",
-)
-```
-
-**CLI:**
-
-```bash
-huggingface-cli upload UPB-RAT/vla-drone-v0.1 \
-  /path/to/vla-drone-v0.1 \
-  . --repo-type dataset
-```
-
----
-
-### 7. Policy checkpoint
-
-Example policy weights:
-
-- [`UPB-RAT/my_pi05_drone_policy_test`](https://huggingface.co/UPB-RAT/my_pi05_drone_policy_test)
-
-**Download:**
-
-```bash
-huggingface-cli download UPB-RAT/my_pi05_drone_policy_test \
-  --local-dir ./my_pi05_drone_policy_test
-```
-
-Use your training / evaluation scripts from this repository (or LeRobot policy APIs) to fine-tune and evaluate π₀.₅-style VLA policies.
-
----
-
+<!-- 
 ## Simulation Environment (Summary)
 
 - **Simulator:** Isaac Sim 5.0 + Isaac Lab.
@@ -291,7 +255,7 @@ Use your training / evaluation scripts from this repository (or LeRobot policy A
 - **Actions:** Body-frame velocity-style commands mapped to sim root velocity.
 - **Observations (policy):** velocities, gravity, relative goal (and RGB for VLA).
 
----
+--- -->
 
 ## Citation
 
@@ -320,7 +284,7 @@ If you use this code, dataset, or models, please cite:
 
 ---
 
-## License
+<!-- ## License
 
 Please refer to the license files in this repository and on the Hugging Face dataset/model cards for terms of use.
 
@@ -330,4 +294,4 @@ Please refer to the license files in this repository and on the Hugging Face dat
 
 This work was developed at the University of Paderborn (UPB-RAT). We thank the Isaac Lab and LeRobot communities for open tools that made data collection and VLA fine-tuning practical.
 
----
+--- -->
